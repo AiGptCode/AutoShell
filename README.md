@@ -7,7 +7,7 @@
     <a href="https://ibb.co/258tSbr"><img src="https://i.ibb.co/mSvq0xK/IMG-1323.png" alt="IMG-1323" style="width: 100%;"></a>
 </div>
 
-
+ 
 
 This code is a web scanner tool designed to find vulnerabilities and file upload points on a website. It uses various techniques to bypass security measures and upload files in a hidden manner. In the following, the technical details of the code and the techniques used will be explained.
 

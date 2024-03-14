@@ -1,9 +1,9 @@
 # AutoShell
 
-<div style="display: inline-block; width: 45%;">
+<div style="display: inline-block; width: 30%;">
     <a href="https://ibb.co/fMnBPPH"><img src="https://i.ibb.co/hsZhttV/IMG-1321.png" alt="IMG-1321" style="width: 100%;"></a>
 </div>
-<div style="display: inline-block; width: 45%;">
+<div style="display: inline-block; width: 30%;">
     <a href="https://ibb.co/258tSbr"><img src="https://i.ibb.co/mSvq0xK/IMG-1323.png" alt="IMG-1323" style="width: 100%;"></a>
 </div>
 

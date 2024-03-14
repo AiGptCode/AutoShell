@@ -1,13 +1,6 @@
 # AutoShell
 
-<div style="display: flex;">
-    <div style="flex: 50%; padding: 5px;">
-        <a href="https://ibb.co/fMnBPPH"><img src="https://i.ibb.co/hsZhttV/IMG-1321.png" alt="IMG-1321" border="0"></a>
-    </div>
-    <div style="flex: 50%; padding: 5px;">
-        <a href="https://ibb.co/258tSbr"><img src="https://i.ibb.co/mSvq0xK/IMG-1323.png" alt="IMG-1323" border="0"></a>
-    </div>
-</div>
+[![IMG-1321](https://i.ibb.co/hsZhttV/IMG-1321.png)](https://ibb.co/fMnBPPH) [![IMG-1323](https://i.ibb.co/mSvq0xK/IMG-1323.png)](https://ibb.co/258tSbr)
 
 
 This code is a web scanner tool designed to find vulnerabilities and file upload points on a website. It uses various techniques to bypass security measures and upload files in a hidden manner. In the following, the technical details of the code and the techniques used will be explained.

